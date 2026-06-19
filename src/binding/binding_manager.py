@@ -34,6 +34,9 @@ class BindingManager:
                 "receive_id": b.get("receive_id", ""),
                 "email": b.get("email", ""),
                 "output_dir": b.get("output_dir", ""),
+                "smtp_sender": b.get("smtp_sender", ""),
+                "smtp_host": b.get("smtp_host", ""),
+                "smtp_port": b.get("smtp_port", 465),
                 "mode": b.get("mode", "private"),
                 "created_at": b.get("created_at", ""),
             }
@@ -100,6 +103,9 @@ class BindingManager:
             "group_chat_id": group_chat_id,
             "email": email,
             "output_dir": output_dir,
+            "smtp_sender": "",
+            "smtp_host": "",
+            "smtp_port": 465,
             "created_at": datetime.now().isoformat(),
         }
         bindings.append(binding)
@@ -171,6 +177,37 @@ class BindingManager:
                 logger.info("Renamed binding %s to %s", binding_id, label)
                 return True
         return False
+
+    def update_binding_smtp(self, binding_id: str, sender: str, host: str, port: int) -> bool:
+        """Update per-recipient SMTP config."""
+        bindings = self._get_bindings()
+        for b in bindings:
+            if b["id"] == binding_id:
+                b["smtp_sender"] = sender
+                b["smtp_host"] = host
+                b["smtp_port"] = port
+                self._save_bindings(bindings)
+                return True
+        return False
+
+    def get_binding_smtp(self, binding_id: str) -> dict | None:
+        """Get per-recipient SMTP config with password from secrets. Returns None if not configured."""
+        binding = self.get_binding_by_id(binding_id)
+        if not binding:
+            return None
+        sender = binding.get("smtp_sender", "")
+        host = binding.get("smtp_host", "")
+        if not sender or not host:
+            return None
+        password = self._cm.get_secret(f"feishu.smtp_passwords.{binding_id}", "")
+        if not password:
+            return None
+        return {
+            "sender": sender,
+            "password": password,
+            "smtp_host": host,
+            "smtp_port": binding.get("smtp_port", 465),
+        }
 
     def update_binding_output_dir(self, binding_id: str, output_dir: str) -> bool:
         """Update the per-recipient screenshot directory."""

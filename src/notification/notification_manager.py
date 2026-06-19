@@ -56,22 +56,43 @@ class NotificationManager:
     def _send_via_email(self, image_path: str):
         """Send image via email fallback.
 
-        Uses the active binding's email as recipient if global recipient is not set.
+        Prefers per-recipient SMTP if configured, otherwise falls back to global SMTP.
+        Uses the active binding's email as recipient.
         """
-        recipient = self._cm.get("email.recipient", "")
-        if not recipient:
-            # Fall back to active binding's email
-            secrets = self._bm.get_active_secrets()
-            if secrets:
-                recipient = secrets.get("email", "")
+        active_id = self._bm.get_active_binding_id()
+        recipient = ""
+
+        # Check for per-recipient SMTP config
+        binding_smtp = self._bm.get_binding_smtp(active_id) if active_id else None
+        if binding_smtp:
+            sender = binding_smtp["sender"]
+            password = binding_smtp["password"]
+            smtp_host = binding_smtp["smtp_host"]
+            smtp_port = binding_smtp["smtp_port"]
+            # Recipient is the binding's own email
+            active = self._bm.get_active_binding()
+            if active:
+                recipient = active.get("email", "")
+        else:
+            # Fall back to global SMTP config
+            sender = self._cm.get("email.sender", "")
+            password = self._cm.get_secret("email.password", "")
+            smtp_host = self._cm.get("email.smtp_host", "")
+            smtp_port = self._cm.get("email.smtp_port", 465)
+            recipient = self._cm.get("email.recipient", "")
+            if not recipient:
+                active = self._bm.get_active_binding()
+                if active:
+                    recipient = active.get("email", "")
+
         if not recipient:
             raise RuntimeError("未配置收件邮箱，请在设置中填写或在绑定中关联邮箱")
 
         email_cfg = {
-            "sender": self._cm.get("email.sender", ""),
-            "password": self._cm.get_secret("email.password", ""),
-            "smtp_host": self._cm.get("email.smtp_host", ""),
-            "smtp_port": self._cm.get("email.smtp_port", 465),
+            "sender": sender,
+            "password": password,
+            "smtp_host": smtp_host,
+            "smtp_port": smtp_port,
             "recipient": recipient,
         }
         if not all([email_cfg["sender"], email_cfg["password"], email_cfg["smtp_host"]]):

@@ -50,7 +50,7 @@ class MainWindow(QMainWindow):
         self._running = False
         self._started_at: float = 0
         self._screenshots_sent: int = 0
-        self._output_dir = get_output_dir(self._cm.get("screenshot.output_dir", ""))
+        self._output_dir = Path.home() / "Pictures" / "ScreenshotCourier"  # placeholder, refreshed below
         self._keep_awake_enabled = self._cm.get("general.keep_awake", True)
         self._runtime_timer = QTimer()
         self._runtime_timer.timeout.connect(self._update_runtime_display)
@@ -58,6 +58,9 @@ class MainWindow(QMainWindow):
 
         # Build UI
         self._build_ui()
+
+        # Set output dir based on active binding (must be after _build_ui)
+        self._refresh_output_dir()
 
         # Tray icon
         self._tray = TrayIcon(self._bm)
@@ -169,11 +172,22 @@ class MainWindow(QMainWindow):
         # --- Bottom buttons ---
         bottom_layout = QHBoxLayout()
 
+        btn_style = """
+            QPushButton {
+                background-color: #607D8B; color: white; border: none;
+                border-radius: 6px; font-size: 14px;
+            }
+            QPushButton:hover { background-color: #546E7A; }
+        """
         settings_btn = QPushButton("高级设置")
+        settings_btn.setMinimumHeight(40)
+        settings_btn.setStyleSheet(btn_style)
         settings_btn.clicked.connect(self._open_settings)
         bottom_layout.addWidget(settings_btn)
 
         dir_btn = QPushButton("打开截图目录")
+        dir_btn.setMinimumHeight(40)
+        dir_btn.setStyleSheet(btn_style)
         dir_btn.clicked.connect(self._open_screenshot_dir)
         bottom_layout.addWidget(dir_btn)
 

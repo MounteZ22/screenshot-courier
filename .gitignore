@@ -17,5 +17,5 @@ Thumbs.db
 *.log
 
 # Screenshots (user data, never commit)
-pic/*.jpg
-pic/*.png
+pic*/*.jpg
+pic*/*.png

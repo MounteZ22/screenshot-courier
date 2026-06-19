@@ -114,6 +114,34 @@ class SettingsDialog(QDialog):
         self.recip_email_input.setPlaceholderText("飞书失败时的兜底收件邮箱")
         form.addRow("兜底邮箱:", self.recip_email_input)
 
+        # Custom SMTP for this recipient
+        self.recip_smtp_check = QCheckBox("使用自定义发件邮箱")
+        self.recip_smtp_check.toggled.connect(self._on_smtp_toggled)
+        form.addRow(self.recip_smtp_check)
+
+        self.recip_smtp_sender = QLineEdit()
+        self.recip_smtp_sender.setPlaceholderText("发件邮箱地址")
+        self.recip_smtp_sender.setVisible(False)
+        form.addRow("  发件邮箱:", self.recip_smtp_sender)
+
+        self.recip_smtp_password = QLineEdit()
+        self.recip_smtp_password.setEchoMode(QLineEdit.Password)
+        self.recip_smtp_password.setPlaceholderText("授权码")
+        self.recip_smtp_password.setVisible(False)
+        form.addRow("  授权码:", self.recip_smtp_password)
+
+        smtp_host_row = QHBoxLayout()
+        self.recip_smtp_host = QLineEdit()
+        self.recip_smtp_host.setPlaceholderText("smtp.qq.com")
+        self.recip_smtp_host.setVisible(False)
+        smtp_host_row.addWidget(self.recip_smtp_host)
+        self.recip_smtp_port = QSpinBox()
+        self.recip_smtp_port.setRange(1, 65535)
+        self.recip_smtp_port.setValue(465)
+        self.recip_smtp_port.setVisible(False)
+        smtp_host_row.addWidget(self.recip_smtp_port)
+        form.addRow("  服务器:端口:", smtp_host_row)
+
         self.recip_dir_input = QLineEdit()
         self.recip_dir_input.setPlaceholderText("留空使用全局默认目录")
         browse_btn = QPushButton("浏览...")
@@ -177,6 +205,7 @@ class SettingsDialog(QDialog):
         self.recip_email_input.setText(binding.get("email", ""))
         self.recip_dir_input.setText(binding.get("output_dir", ""))
 
+        # Feishu status
         secret = self._cm.get_secret(f"feishu.bindings.{self._selected_binding_id}")
         if secret:
             self.recip_feishu_status.setText("飞书状态: ✓ 已绑定")
@@ -185,12 +214,38 @@ class SettingsDialog(QDialog):
             self.recip_feishu_status.setText("飞书状态: ⚠ 密钥缺失")
             self.recip_feishu_status.setStyleSheet("color: #F44336;")
 
+        # SMTP
+        smtp_sender = binding.get("smtp_sender", "")
+        smtp_host = binding.get("smtp_host", "")
+        has_smtp = bool(smtp_sender and smtp_host)
+        self.recip_smtp_check.setChecked(has_smtp)
+        self.recip_smtp_sender.setText(smtp_sender)
+        self.recip_smtp_host.setText(smtp_host)
+        self.recip_smtp_port.setValue(binding.get("smtp_port", 465))
+        smtp_pwd = self._cm.get_secret(f"feishu.smtp_passwords.{self._selected_binding_id}", "")
+        self.recip_smtp_password.setPlaceholderText(
+            "已保存（不显示）" if smtp_pwd else "授权码"
+        )
+        self.recip_smtp_password.clear()
+        self._on_smtp_toggled(has_smtp)
+
+    def _on_smtp_toggled(self, checked):
+        self.recip_smtp_sender.setVisible(checked)
+        self.recip_smtp_password.setVisible(checked)
+        self.recip_smtp_host.setVisible(checked)
+        self.recip_smtp_port.setVisible(checked)
+
     def _clear_recipient_detail(self):
         self.recip_name_input.clear()
         self.recip_email_input.clear()
         self.recip_dir_input.clear()
         self.recip_feishu_status.setText("飞书状态: —")
         self.recip_feishu_status.setStyleSheet("")
+        self.recip_smtp_check.setChecked(False)
+        self.recip_smtp_sender.clear()
+        self.recip_smtp_password.clear()
+        self.recip_smtp_host.clear()
+        self.recip_smtp_port.setValue(465)
 
     def _save_recipient_detail(self):
         if not self._selected_binding_id:
@@ -206,6 +261,26 @@ class SettingsDialog(QDialog):
         self._bm.update_binding_label(self._selected_binding_id, label)
         self._bm.update_binding_email(self._selected_binding_id, email)
         self._bm.update_binding_output_dir(self._selected_binding_id, output_dir)
+
+        # Save custom SMTP if toggled
+        if self.recip_smtp_check.isChecked():
+            sender = self.recip_smtp_sender.text().strip()
+            host = self.recip_smtp_host.text().strip()
+            port = self.recip_smtp_port.value()
+            pwd = self.recip_smtp_password.text().strip()
+            self._bm.update_binding_smtp(self._selected_binding_id, sender, host, port)
+            if pwd:
+                self._cm.set_secret(
+                    f"feishu.smtp_passwords.{self._selected_binding_id}", pwd
+                )
+                self.recip_smtp_password.clear()
+                self.recip_smtp_password.setPlaceholderText("已保存（不显示）")
+        else:
+            self._bm.update_binding_smtp(self._selected_binding_id, "", "", 465)
+            self._cm.delete_secret(
+                f"feishu.smtp_passwords.{self._selected_binding_id}"
+            )
+
         self._refresh_recipient_list()
         QMessageBox.information(self, "保存成功", f"接收人 '{label}' 已更新")
 
