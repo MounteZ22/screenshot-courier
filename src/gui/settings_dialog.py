@@ -391,6 +391,11 @@ class SettingsDialog(QDialog):
         self.smtp_host_input.setText(self._cm.get("email.smtp_host", ""))
         self.smtp_port_spin.setValue(self._cm.get("email.smtp_port", 465))
 
+        saved_pwd = self._cm.get_secret("email.password", "")
+        self.email_password_input.setPlaceholderText(
+            "已保存（不显示）" if saved_pwd else "输入授权码"
+        )
+
     def _save(self):
         # Screenshot
         interval_text = self.interval_combo.currentText().replace(" 分钟", "").strip()
