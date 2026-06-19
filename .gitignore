@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# App runtime (generated at user's machine)
+*.dat
+*.log
+
+# Screenshots (user data, never commit)
+pic/*.jpg
+pic/*.png
