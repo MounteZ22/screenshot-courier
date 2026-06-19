@@ -27,3 +27,13 @@ dist/
 
 # Release archives
 *.zip
+
+# Dev docs (not for users)
+CLAUDE.md
+AGENT.md
+requirements_and_design.md
+
+# Screenshot directories (all variants)
+pic/
+pic*/
+
