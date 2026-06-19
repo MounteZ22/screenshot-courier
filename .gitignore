@@ -24,3 +24,6 @@ pic*/*.png
 build/
 dist/
 *.spec.bak
+
+# Release archives
+*.zip

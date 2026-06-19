@@ -201,7 +201,7 @@ class MainWindow(QMainWindow):
             }
             QPushButton:hover { color: #F44336; border-color: #F44336; }
         """)
-        quit_btn.clicked.connect(self._quit)
+        quit_btn.clicked.connect(self._confirm_quit)
         layout.addWidget(quit_btn)
 
         layout.addStretch()
@@ -407,6 +407,15 @@ class MainWindow(QMainWindow):
     def _switch_binding(self, binding_id: str):
         if self._bm.switch_binding(binding_id):
             self._update_all()
+
+    def _confirm_quit(self):
+        reply = QMessageBox.question(
+            self, "确认退出",
+            "确定要退出 Screenshot Courier 吗？\n退出后将停止截图和推送。",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self._quit()
 
     def _quit(self):
         self._stop_monitoring()
