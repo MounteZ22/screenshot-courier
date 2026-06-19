@@ -4,7 +4,7 @@ import logging
 import os
 import subprocess
 import threading
-from datetime import datetime
+import time
 from pathlib import Path
 
 from PySide6.QtWidgets import (
@@ -23,7 +23,6 @@ from ..core.scheduler import create_scheduler, update_scheduler_interval
 from ..notification.notification_manager import NotificationManager
 from .tray_icon import TrayIcon
 from .settings_dialog import SettingsDialog
-from .binding_dialog import BindingDialog
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +48,13 @@ class MainWindow(QMainWindow):
         # State
         self._scheduler = None
         self._running = False
+        self._started_at: float = 0
+        self._screenshots_sent: int = 0
         self._output_dir = get_output_dir(self._cm.get("screenshot.output_dir", ""))
         self._keep_awake_enabled = self._cm.get("general.keep_awake", True)
+        self._runtime_timer = QTimer()
+        self._runtime_timer.timeout.connect(self._update_runtime_display)
+        self._runtime_timer.start(2000)  # update every 2 seconds
 
         # Build UI
         self._build_ui()
@@ -63,7 +67,6 @@ class MainWindow(QMainWindow):
         self._tray.open_screenshot_dir.connect(self._open_screenshot_dir)
         self._tray.take_screenshot_now.connect(self._take_screenshot_now)
         self._tray.switch_binding.connect(self._switch_binding)
-        self._tray.add_binding.connect(self._add_binding)
         self._tray.quit_app.connect(self._quit)
 
         # Thread-safe signals
@@ -109,19 +112,8 @@ class MainWindow(QMainWindow):
         recipient_row.addWidget(self._recipient_combo, 1)
         sg_layout.addLayout(recipient_row)
 
-        self._interval_label = QLabel("间隔: 15 分钟")
-        sg_layout.addWidget(self._interval_label)
-
-        self._dir_label = QLabel(f"截图目录: {self._output_dir}")
-        self._dir_label.setWordWrap(True)
-        sg_layout.addWidget(self._dir_label)
-
-        layout.addWidget(status_group)
-
-        # --- Quick settings ---
-        settings_row = QHBoxLayout()
-
-        settings_row.addWidget(QLabel("截图间隔:"))
+        interval_row = QHBoxLayout()
+        interval_row.addWidget(QLabel("间隔:"))
         self._interval_combo = QComboBox()
         for m in INTERVAL_PRESETS:
             self._interval_combo.addItem(f"{m} 分钟", m)
@@ -133,9 +125,17 @@ class MainWindow(QMainWindow):
         else:
             self._interval_combo.setEditText(str(saved_interval))
         self._interval_combo.currentIndexChanged.connect(self._on_interval_changed)
-        settings_row.addWidget(self._interval_combo)
+        interval_row.addWidget(self._interval_combo, 1)
+        sg_layout.addLayout(interval_row)
 
-        layout.addLayout(settings_row)
+        self._dir_label = QLabel(f"截图目录: {self._output_dir}")
+        self._dir_label.setWordWrap(True)
+        sg_layout.addWidget(self._dir_label)
+
+        self._runtime_label = QLabel("运行时间: —  已截图: 0 张")
+        sg_layout.addWidget(self._runtime_label)
+
+        layout.addWidget(status_group)
 
         # --- Action buttons ---
         btn_layout = QHBoxLayout()
@@ -169,10 +169,6 @@ class MainWindow(QMainWindow):
         # --- Bottom buttons ---
         bottom_layout = QHBoxLayout()
 
-        bind_btn = QPushButton("新增接收人")
-        bind_btn.clicked.connect(self._add_binding)
-        bottom_layout.addWidget(bind_btn)
-
         settings_btn = QPushButton("高级设置")
         settings_btn.clicked.connect(self._open_settings)
         bottom_layout.addWidget(settings_btn)
@@ -200,8 +196,7 @@ class MainWindow(QMainWindow):
         active_label = "未设置"
         selected_idx = -1
         for b in bindings:
-            display = b["label"] + (f" ({b['email']})" if b.get("email") else "")
-            self._recipient_combo.addItem(display, b["id"])
+            self._recipient_combo.addItem(b["label"], b["id"])
             if b["id"] == active_id:
                 selected_idx = self._recipient_combo.count() - 1
                 active_label = b["label"]
@@ -213,17 +208,36 @@ class MainWindow(QMainWindow):
 
         self._tray.update_recipient(active_label)
 
-        interval = self._cm.get("screenshot.interval_minutes", 15)
-        self._interval_label.setText(f"间隔: {interval} 分钟")
-        self._dir_label.setText(f"截图目录: {self._output_dir}")
+        # Refresh interval combo
+        saved_interval = self._cm.get("screenshot.interval_minutes", 15)
+        idx = self._interval_combo.findData(saved_interval)
+        if idx >= 0:
+            self._interval_combo.setCurrentIndex(idx)
 
+        self._dir_label.setText(f"截图目录: {self._output_dir}")
+        self._update_runtime_display()
         self._update_status_ui()
+
+    def _update_runtime_display(self):
+        if self._running and self._started_at:
+            elapsed = int(time.time() - self._started_at)
+            if elapsed < 3600:
+                runtime = f"{elapsed // 60} 分钟"
+            else:
+                h = elapsed // 3600
+                m = (elapsed % 3600) // 60
+                runtime = f"{h} 小时 {m} 分钟"
+        else:
+            runtime = "—"
+        self._runtime_label.setText(f"运行时间: {runtime}  已截图: {self._screenshots_sent} 张")
 
     def _on_recipient_changed(self):
         binding_id = self._recipient_combo.currentData()
         if binding_id:
             self._bm.switch_binding(binding_id)
             self._tray.update_recipient(self._recipient_combo.currentText())
+            # Update output dir to match selected recipient
+            self._refresh_output_dir()
 
     def _update_status_ui(self):
         if self._running:
@@ -261,7 +275,6 @@ class MainWindow(QMainWindow):
                 return
         self._cm.set("screenshot.interval_minutes", interval)
         self._cm.save()
-        self._interval_label.setText(f"间隔: {interval} 分钟")
 
         # Live-update scheduler if running
         if self._running and self._scheduler:
@@ -277,6 +290,9 @@ class MainWindow(QMainWindow):
         interval = self._cm.get("screenshot.interval_minutes", 15)
         self._scheduler = create_scheduler(interval, self._do_screenshot_job)
         self._running = True
+        self._started_at = time.time()
+        self._screenshots_sent = 0
+        self._refresh_output_dir()
 
         if self._keep_awake_enabled:
             keep_awake_on()
@@ -286,7 +302,6 @@ class MainWindow(QMainWindow):
         self._tray.show_message("Screenshot Courier", f"已开始监控（间隔 {interval} 分钟）", "info")
         logger.info("Monitoring started")
 
-        # Immediately take the first screenshot in background thread
         QTimer.singleShot(500, self._run_screenshot_in_thread)
 
     def _stop_monitoring(self):
@@ -313,13 +328,24 @@ class MainWindow(QMainWindow):
         self._tray.update_status(running, status)
         self._update_status_ui()
 
+    def _refresh_output_dir(self):
+        """Refresh output dir based on active binding's preference."""
+        active = self._bm.get_active_binding()
+        binding_dir = active.get("output_dir", "") if active else ""
+        self._output_dir = get_output_dir(
+            self._cm.get("screenshot.output_dir", ""), binding_dir
+        )
+        self._dir_label.setText(f"截图目录: {self._output_dir}")
+
     def _do_screenshot_job(self):
         try:
+            self._refresh_output_dir()
             filename = build_shot_filename()
             filepath = self._output_dir / filename
             capture_screen(filepath, quality=self._cm.get("screenshot.quality", 80))
             logger.info("Screenshot captured: %s", filepath)
             self._nm.send_screenshot(filepath)
+            self._screenshots_sent += 1
             cleanup_old_screenshots(
                 self._output_dir,
                 retention_days=self._cm.get("storage.retention_days", 30),
@@ -357,19 +383,6 @@ class MainWindow(QMainWindow):
         if self._bm.switch_binding(binding_id):
             self._update_all()
 
-    def _add_binding(self):
-        dlg = BindingDialog(self)
-        dlg.binding_added.connect(self._on_new_binding)
-        dlg.exec()
-
-    def _on_new_binding(self, label, app_id, app_secret, open_id, email=""):
-        try:
-            self._bm.add_binding(label, app_id, app_secret, open_id, email=email)
-            self._update_all()
-            self._tray.show_message("Screenshot Courier", f"已添加接收人: {label}", "info")
-        except ValueError as e:
-            self._tray.show_message("绑定失败", str(e), "error")
-
     def _quit(self):
         self._stop_monitoring()
         self._tray.hide()
@@ -380,6 +393,5 @@ class MainWindow(QMainWindow):
         if self._cm.get("general.minimize_to_tray", True):
             event.ignore()
             self.hide()
-            self._tray.show_message("Screenshot Courier", "已最小化到系统托盘", "info")
         else:
             self._quit()

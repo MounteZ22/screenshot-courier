@@ -34,7 +34,6 @@ class TrayIcon(QObject):
     open_screenshot_dir = Signal()
     take_screenshot_now = Signal()
     switch_binding = Signal(str)  # binding_id
-    add_binding = Signal()
     quit_app = Signal()
 
     def __init__(self, binding_manager: BindingManager, parent=None):
@@ -109,11 +108,6 @@ class TrayIcon(QObject):
             action.setChecked(b["id"] == active_id)
             action.triggered.connect(lambda checked, bid=b["id"]: self.switch_binding.emit(bid))
             self._switch_menu.addAction(action)
-
-        self._switch_menu.addSeparator()
-        add_action = QAction("+ 新增绑定...")
-        add_action.triggered.connect(self.add_binding.emit)
-        self._switch_menu.addAction(add_action)
 
     def update_status(self, running: bool, status: str = "normal"):
         """Update tray icon and tooltip based on app state."""

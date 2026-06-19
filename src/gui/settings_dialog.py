@@ -20,7 +20,10 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QListWidget,
     QListWidgetItem,
+    QSplitter,
+    QFrame,
 )
+from PySide6.QtCore import Qt
 
 from ..config.config_manager import ConfigManager
 from ..binding.binding_manager import BindingManager
@@ -31,49 +34,263 @@ INTERVAL_PRESETS = [5, 10, 15, 20, 30, 45, 60]
 
 
 class SettingsDialog(QDialog):
-    """Settings dialog with tabs for different config sections."""
+    """Settings dialog with tabs: 接收人 / 截图 / 通用."""
 
     def __init__(self, config_manager: ConfigManager, binding_manager: BindingManager, parent=None):
         super().__init__(parent)
         self._cm = config_manager
         self._bm = binding_manager
+        self._selected_binding_id: str = ""
         self.setWindowTitle("设置")
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(560)
         self._setup_ui()
         self._load_settings()
+
+    # ── UI structure ─────────────────────────────────────────────
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         tabs = QTabWidget()
+        tabs.addTab(self._create_recipient_tab(), "接收人")
         tabs.addTab(self._create_screenshot_tab(), "截图")
-        tabs.addTab(self._create_feishu_tab(), "飞书")
-        tabs.addTab(self._create_email_tab(), "邮件")
         tabs.addTab(self._create_general_tab(), "通用")
         layout.addWidget(tabs)
 
-        # Bottom buttons
         btn_layout = QHBoxLayout()
+        btn_layout.addStretch()
         save_btn = QPushButton("保存")
         save_btn.clicked.connect(self._save)
         cancel_btn = QPushButton("取消")
         cancel_btn.clicked.connect(self.reject)
-        btn_layout.addStretch()
         btn_layout.addWidget(save_btn)
         btn_layout.addWidget(cancel_btn)
         layout.addLayout(btn_layout)
+
+    # ── 接收人 Tab ──────────────────────────────────────────────
+
+    def _create_recipient_tab(self) -> QWidget:
+        w = QWidget()
+        layout = QVBoxLayout(w)
+
+        splitter = QSplitter(Qt.Horizontal)
+
+        # Left: recipient list
+        left = QWidget()
+        left_layout = QVBoxLayout(left)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        self.recipient_list = QListWidget()
+        self.recipient_list.currentItemChanged.connect(self._on_recipient_selected)
+        left_layout.addWidget(self.recipient_list)
+
+        left_btns = QHBoxLayout()
+        add_btn = QPushButton("新增")
+        add_btn.clicked.connect(self._add_recipient)
+        del_btn = QPushButton("删除")
+        del_btn.clicked.connect(self._delete_recipient)
+        left_btns.addWidget(add_btn)
+        left_btns.addWidget(del_btn)
+        left_layout.addLayout(left_btns)
+        splitter.addWidget(left)
+
+        # Right: detail panel
+        right = QWidget()
+        right_layout = QVBoxLayout(right)
+        right_layout.setContentsMargins(10, 0, 0, 0)
+
+        form = QFormLayout()
+
+        self.recip_name_input = QLineEdit()
+        form.addRow("名称:", self.recip_name_input)
+
+        self.recip_feishu_status = QLabel("飞书状态: —")
+        rebind_btn = QPushButton("重新绑定")
+        rebind_btn.clicked.connect(self._rebind_feishu)
+        feishu_row = QHBoxLayout()
+        feishu_row.addWidget(self.recip_feishu_status, 1)
+        feishu_row.addWidget(rebind_btn)
+        form.addRow("飞书:", feishu_row)
+
+        self.recip_email_input = QLineEdit()
+        self.recip_email_input.setPlaceholderText("飞书失败时的兜底收件邮箱")
+        form.addRow("兜底邮箱:", self.recip_email_input)
+
+        self.recip_dir_input = QLineEdit()
+        self.recip_dir_input.setPlaceholderText("留空使用全局默认目录")
+        browse_btn = QPushButton("浏览...")
+        browse_btn.clicked.connect(self._browse_recip_dir)
+        dir_row = QHBoxLayout()
+        dir_row.addWidget(self.recip_dir_input)
+        dir_row.addWidget(browse_btn)
+        form.addRow("截图目录:", dir_row)
+
+        right_layout.addLayout(form)
+        right_layout.addStretch()
+
+        save_btn = QPushButton("保存修改")
+        save_btn.clicked.connect(self._save_recipient_detail)
+        right_layout.addWidget(save_btn)
+
+        splitter.addWidget(right)
+        splitter.setStretchFactor(0, 1)
+        splitter.setStretchFactor(1, 2)
+        layout.addWidget(splitter)
+
+        self._refresh_recipient_list()
+        return w
+
+    def _refresh_recipient_list(self):
+        bindings = self._bm.list_bindings()
+        active_id = self._bm.get_active_binding_id()
+        self.recipient_list.blockSignals(True)
+        self.recipient_list.clear()
+        for b in bindings:
+            marker = "▶ " if b["id"] == active_id else "  "
+            item = QListWidgetItem(f"{marker}{b['label']}")
+            item.setData(Qt.UserRole, b["id"])
+            self.recipient_list.addItem(item)
+        self.recipient_list.blockSignals(False)
+
+        # Restore selection
+        if self._selected_binding_id:
+            for i in range(self.recipient_list.count()):
+                item = self.recipient_list.item(i)
+                if item and item.data(Qt.UserRole) == self._selected_binding_id:
+                    self.recipient_list.setCurrentItem(item)
+                    break
+        if not self.recipient_list.currentItem() and self.recipient_list.count() > 0:
+            self.recipient_list.setCurrentRow(0)
+
+    def _on_recipient_selected(self, current, previous):
+        if current is None:
+            self._selected_binding_id = ""
+            self._clear_recipient_detail()
+            return
+        self._selected_binding_id = current.data(Qt.UserRole) or ""
+        self._load_recipient_detail()
+
+    def _load_recipient_detail(self):
+        binding = self._bm.get_binding_by_id(self._selected_binding_id)
+        if not binding:
+            self._clear_recipient_detail()
+            return
+        self.recip_name_input.setText(binding.get("label", ""))
+        self.recip_email_input.setText(binding.get("email", ""))
+        self.recip_dir_input.setText(binding.get("output_dir", ""))
+
+        secret = self._cm.get_secret(f"feishu.bindings.{self._selected_binding_id}")
+        if secret:
+            self.recip_feishu_status.setText("飞书状态: ✓ 已绑定")
+            self.recip_feishu_status.setStyleSheet("color: #4CAF50;")
+        else:
+            self.recip_feishu_status.setText("飞书状态: ⚠ 密钥缺失")
+            self.recip_feishu_status.setStyleSheet("color: #F44336;")
+
+    def _clear_recipient_detail(self):
+        self.recip_name_input.clear()
+        self.recip_email_input.clear()
+        self.recip_dir_input.clear()
+        self.recip_feishu_status.setText("飞书状态: —")
+        self.recip_feishu_status.setStyleSheet("")
+
+    def _save_recipient_detail(self):
+        if not self._selected_binding_id:
+            return
+        label = self.recip_name_input.text().strip()
+        email = self.recip_email_input.text().strip()
+        output_dir = self.recip_dir_input.text().strip()
+
+        if not label:
+            QMessageBox.warning(self, "提示", "名称不能为空")
+            return
+
+        self._bm.update_binding_label(self._selected_binding_id, label)
+        self._bm.update_binding_email(self._selected_binding_id, email)
+        self._bm.update_binding_output_dir(self._selected_binding_id, output_dir)
+        self._refresh_recipient_list()
+        QMessageBox.information(self, "保存成功", f"接收人 '{label}' 已更新")
+
+    def _add_recipient(self):
+        from .binding_dialog import BindingDialog
+        dlg = BindingDialog(self)
+        dlg.binding_added.connect(self._on_recipient_added)
+        dlg.exec()
+
+    def _on_recipient_added(self, label, app_id, app_secret, open_id, email=""):
+        try:
+            self._bm.add_binding(label, app_id, app_secret, open_id, email=email)
+            self._selected_binding_id = self._bm.get_active_binding_id()
+            self._refresh_recipient_list()
+        except ValueError as e:
+            QMessageBox.warning(self, "绑定失败", str(e))
+
+    def _delete_recipient(self):
+        item = self.recipient_list.currentItem()
+        if item is None:
+            return
+        binding_id = item.data(Qt.UserRole)
+        if not binding_id:
+            return
+        binding = self._bm.get_binding_by_id(binding_id)
+        label = binding["label"] if binding else "未知"
+        reply = QMessageBox.question(
+            self, "确认删除",
+            f"确定删除接收人 '{label}' 吗？",
+            QMessageBox.Yes | QMessageBox.No,
+        )
+        if reply == QMessageBox.Yes:
+            self._bm.remove_binding(binding_id)
+            self._selected_binding_id = ""
+            self._refresh_recipient_list()
+
+    def _rebind_feishu(self):
+        if not self._selected_binding_id:
+            QMessageBox.information(self, "提示", "请先选择一个接收人")
+            return
+        from .binding_dialog import BindingDialog
+        dlg = BindingDialog(self)
+        dlg.binding_added.connect(self._on_rebind_done)
+        dlg.exec()
+
+    def _on_rebind_done(self, label, app_id, app_secret, open_id, email=""):
+        if not self._selected_binding_id:
+            return
+        self._bm.update_binding_label(self._selected_binding_id, label)
+        self._bm.update_binding_secret(self._selected_binding_id, app_secret)
+        # Also update app_id and receive_id in the binding dict
+        # Need a method for this — update the binding directly
+        bindings = self._cm.get("feishu.bindings", [])
+        for b in bindings:
+            if b["id"] == self._selected_binding_id:
+                b["app_id"] = app_id
+                b["receive_id"] = open_id
+                break
+        self._cm.set("feishu.bindings", bindings)
+        self._cm.save()
+        if email:
+            self._bm.update_binding_email(self._selected_binding_id, email)
+        self._refresh_recipient_list()
+        self._load_recipient_detail()
+        QMessageBox.information(self, "成功", f"已重新绑定为 '{label}'")
+
+    def _browse_recip_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "选择截图保存目录")
+        if d:
+            self.recip_dir_input.setText(d)
+
+    # ── 截图 Tab ────────────────────────────────────────────────
 
     def _create_screenshot_tab(self) -> QWidget:
         w = QWidget()
         layout = QVBoxLayout(w)
 
-        # Interval
-        group = QGroupBox("截图间隔")
+        group = QGroupBox("截图设置")
         form = QFormLayout()
+
         self.interval_combo = QComboBox()
         for m in INTERVAL_PRESETS:
             self.interval_combo.addItem(f"{m} 分钟", m)
         self.interval_combo.setEditable(True)
-        form.addRow("预设间隔:", self.interval_combo)
+        form.addRow("间隔:", self.interval_combo)
 
         self.quality_spin = QSpinBox()
         self.quality_spin.setRange(1, 100)
@@ -82,15 +299,14 @@ class SettingsDialog(QDialog):
 
         self.output_dir_input = QLineEdit()
         browse_btn = QPushButton("浏览...")
-        browse_btn.clicked.connect(self._browse_output_dir)
+        browse_btn.clicked.connect(self._browse_global_dir)
         dir_layout = QHBoxLayout()
         dir_layout.addWidget(self.output_dir_input)
         dir_layout.addWidget(browse_btn)
-        form.addRow("保存目录:", dir_layout)
+        form.addRow("全局截图目录:", dir_layout)
         group.setLayout(form)
         layout.addWidget(group)
 
-        # Storage cleanup
         clean_group = QGroupBox("自动清理")
         clean_form = QFormLayout()
         self.auto_clean_check = QCheckBox("启用自动清理")
@@ -109,124 +325,12 @@ class SettingsDialog(QDialog):
         layout.addStretch()
         return w
 
-    def _create_feishu_tab(self) -> QWidget:
-        w = QWidget()
-        layout = QVBoxLayout(w)
+    def _browse_global_dir(self):
+        d = QFileDialog.getExistingDirectory(self, "选择截图保存目录")
+        if d:
+            self.output_dir_input.setText(d)
 
-        self.feishu_enabled_check = QCheckBox("启用飞书推送")
-        layout.addWidget(self.feishu_enabled_check)
-
-        # Binding list
-        group = QGroupBox("接收人列表")
-        group_layout = QVBoxLayout()
-        self.binding_list_widget = QListWidget()
-        self.binding_list_widget.setMaximumHeight(120)
-        self._refresh_binding_list()
-        self.binding_list_widget.itemDoubleClicked.connect(self._switch_to_binding)
-        group_layout.addWidget(self.binding_list_widget)
-
-        btn_layout = QHBoxLayout()
-        add_btn = QPushButton("新增绑定...")
-        add_btn.clicked.connect(self._add_binding)
-        switch_btn = QPushButton("切换到此")
-        switch_btn.clicked.connect(lambda: self._switch_to_binding(self.binding_list_widget.currentItem()))
-        remove_btn = QPushButton("删除选中")
-        remove_btn.clicked.connect(self._remove_binding)
-        btn_layout.addWidget(add_btn)
-        btn_layout.addWidget(switch_btn)
-        btn_layout.addWidget(remove_btn)
-        btn_layout.addStretch()
-        group_layout.addLayout(btn_layout)
-        group.setLayout(group_layout)
-        layout.addWidget(group)
-
-        # Edit active binding's email
-        email_group = QGroupBox("当前接收人邮箱（飞书失败时邮件通知）")
-        email_form = QFormLayout()
-        self.binding_email_input = QLineEdit()
-        self.binding_email_input.setPlaceholderText("选填，如 zhangsan@example.com")
-        save_email_btn = QPushButton("保存邮箱")
-        save_email_btn.clicked.connect(self._save_binding_email)
-        email_layout = QHBoxLayout()
-        email_layout.addWidget(self.binding_email_input)
-        email_layout.addWidget(save_email_btn)
-        email_form.addRow("备用邮箱:", email_layout)
-        email_group.setLayout(email_form)
-        layout.addWidget(email_group)
-
-        # Update secret for existing binding
-        update_group = QGroupBox("补充密钥（已有绑定丢失 secret 时使用）")
-        update_form = QFormLayout()
-        hint_label = QLabel("如果 secrets.dat 丢失，可在飞书开放平台后台查到 app_secret 填入，无需重新扫码。")
-        hint_label.setWordWrap(True)
-        hint_label.setStyleSheet("color: #666; font-size: 11px;")
-        update_form.addRow(hint_label)
-        self.update_binding_combo = QComboBox()
-        update_form.addRow("选择接收人:", self.update_binding_combo)
-        self.update_secret_input = QLineEdit()
-        self.update_secret_input.setEchoMode(QLineEdit.Password)
-        self.update_secret_input.setPlaceholderText("填入 app_secret")
-        update_form.addRow("App Secret:", self.update_secret_input)
-        update_btn = QPushButton("更新密钥")
-        update_btn.clicked.connect(self._update_binding_secret)
-        update_form.addRow("", update_btn)
-        update_group.setLayout(update_form)
-        layout.addWidget(update_group)
-
-        # Manual app config (fallback)
-        manual_group = QGroupBox("手动新增绑定（扫码失败时使用）")
-        manual_form = QFormLayout()
-        self.app_id_input = QLineEdit()
-        self.app_id_input.setPlaceholderText("cli_xxxxxxxxx")
-        manual_form.addRow("App ID:", self.app_id_input)
-        self.app_secret_input = QLineEdit()
-        self.app_secret_input.setEchoMode(QLineEdit.Password)
-        manual_form.addRow("App Secret:", self.app_secret_input)
-        self.open_id_input = QLineEdit()
-        self.open_id_input.setPlaceholderText("ou_xxxxxxxxx")
-        manual_form.addRow("Open ID:", self.open_id_input)
-        manual_save_btn = QPushButton("保存为新绑定")
-        manual_save_btn.clicked.connect(self._save_manual_binding)
-        manual_form.addRow("", manual_save_btn)
-        manual_group.setLayout(manual_form)
-        layout.addWidget(manual_group)
-
-        layout.addStretch()
-        return w
-
-    def _create_email_tab(self) -> QWidget:
-        w = QWidget()
-        layout = QVBoxLayout(w)
-
-        self.email_enabled_check = QCheckBox("启用邮件推送（兜底）")
-        layout.addWidget(self.email_enabled_check)
-
-        # Per-binding email hint
-        hint = QLabel("提示：每个接收人可关联独立邮箱。切换接收人时自动切换收件邮箱。\n"
-                       "下方填写的[收件邮箱]作为全局默认，绑定中设置的邮箱优先。")
-        hint.setWordWrap(True)
-        hint.setStyleSheet("color: #666; font-size: 11px;")
-        layout.addWidget(hint)
-
-        group = QGroupBox("SMTP 配置")
-        form = QFormLayout()
-        self.email_sender_input = QLineEdit()
-        form.addRow("发件邮箱:", self.email_sender_input)
-        self.email_password_input = QLineEdit()
-        self.email_password_input.setEchoMode(QLineEdit.Password)
-        form.addRow("密码/授权码:", self.email_password_input)
-        self.smtp_host_input = QLineEdit()
-        form.addRow("SMTP 服务器:", self.smtp_host_input)
-        self.smtp_port_spin = QSpinBox()
-        self.smtp_port_spin.setRange(1, 65535)
-        form.addRow("端口:", self.smtp_port_spin)
-        self.email_recipient_input = QLineEdit()
-        form.addRow("收件邮箱:", self.email_recipient_input)
-        group.setLayout(form)
-        layout.addWidget(group)
-
-        layout.addStretch()
-        return w
+    # ── 通用 Tab ────────────────────────────────────────────────
 
     def _create_general_tab(self) -> QWidget:
         w = QWidget()
@@ -238,121 +342,30 @@ class SettingsDialog(QDialog):
         layout.addWidget(self.minimize_tray_check)
         self.keep_awake_check = QCheckBox("运行时阻止息屏")
         layout.addWidget(self.keep_awake_check)
+        self.email_enabled_check = QCheckBox("启用邮件兜底推送")
+        layout.addWidget(self.email_enabled_check)
+
+        smtp_group = QGroupBox("SMTP 发件服务器（邮件兜底用）")
+        smtp_form = QFormLayout()
+        self.email_sender_input = QLineEdit()
+        smtp_form.addRow("发件邮箱:", self.email_sender_input)
+        self.email_password_input = QLineEdit()
+        self.email_password_input.setEchoMode(QLineEdit.Password)
+        smtp_form.addRow("密码/授权码:", self.email_password_input)
+        self.smtp_host_input = QLineEdit()
+        smtp_form.addRow("SMTP 服务器:", self.smtp_host_input)
+        self.smtp_port_spin = QSpinBox()
+        self.smtp_port_spin.setRange(1, 65535)
+        smtp_form.addRow("端口:", self.smtp_port_spin)
+        smtp_group.setLayout(smtp_form)
+        layout.addWidget(smtp_group)
 
         layout.addStretch()
         return w
 
-    def _browse_output_dir(self):
-        d = QFileDialog.getExistingDirectory(self, "选择截图保存目录")
-        if d:
-            self.output_dir_input.setText(d)
-
-    def _refresh_binding_list(self):
-        bindings = self._bm.list_bindings()
-        active_id = self._bm.get_active_binding_id()
-
-        # Refresh list widget
-        self.binding_list_widget.clear()
-        if not bindings:
-            self.binding_list_widget.addItem("（暂无绑定）")
-        else:
-            for b in bindings:
-                marker = "▶ " if b["id"] == active_id else "  "
-                email_hint = f" | 邮箱: {b['email']}" if b.get("email") else ""
-                text = f"{marker}{b['label']}{email_hint}  (创建于 {b.get('created_at', '')[:10]})"
-                item = QListWidgetItem(text)
-                item.setData(1, b["id"])
-                self.binding_list_widget.addItem(item)
-
-        # Refresh update-secret combo (may not exist yet on first call)
-        if hasattr(self, "update_binding_combo"):
-            self.update_binding_combo.clear()
-            for b in bindings:
-                self.update_binding_combo.addItem(b["label"], b["id"])
-
-    def _switch_to_binding(self, item):
-        if item is None:
-            return
-        binding_id = item.data(1)
-        if binding_id and self._bm.switch_binding(binding_id):
-            self._refresh_binding_list()
-
-    def _remove_binding(self):
-        item = self.binding_list_widget.currentItem()
-        if item is None:
-            QMessageBox.information(self, "提示", "请先在列表中选择一个接收人")
-            return
-        binding_id = item.data(1)
-        if not binding_id:
-            return
-        binding = self._bm.get_binding_by_id(binding_id)
-        label = binding["label"] if binding else "未知"
-        reply = QMessageBox.question(
-            self, "确认删除",
-            f"确定删除接收人 '{label}' 吗？",
-            QMessageBox.Yes | QMessageBox.No,
-        )
-        if reply == QMessageBox.Yes:
-            self._bm.remove_binding(binding_id)
-            self._refresh_binding_list()
-
-    def _add_binding(self):
-        from .binding_dialog import BindingDialog
-        dlg = BindingDialog(self)
-        dlg.binding_added.connect(self._on_binding_added)
-        dlg.exec()
-
-    def _on_binding_added(self, label, app_id, app_secret, open_id, email=""):
-        try:
-            self._bm.add_binding(label, app_id, app_secret, open_id, email=email)
-            self._refresh_binding_list()
-        except ValueError as e:
-            QMessageBox.warning(self, "绑定失败", str(e))
-
-    def _update_binding_secret(self):
-        binding_id = self.update_binding_combo.currentData()
-        if not binding_id:
-            QMessageBox.information(self, "提示", "请先选择接收人")
-            return
-        secret = self.update_secret_input.text().strip()
-        if not secret:
-            QMessageBox.warning(self, "提示", "请输入 App Secret")
-            return
-        if self._bm.update_binding_secret(binding_id, secret):
-            QMessageBox.information(self, "成功", "密钥已更新")
-            self.update_secret_input.clear()
-
-    def _save_binding_email(self):
-        """Save email for the currently active binding."""
-        active_id = self._bm.get_active_binding_id()
-        if not active_id:
-            QMessageBox.warning(self, "提示", "请先添加一个接收人")
-            return
-        email = self.binding_email_input.text().strip()
-        self._bm.update_binding_email(active_id, email)
-        self._refresh_binding_list()
-        QMessageBox.information(self, "保存成功", f"已为当前接收人设置备用邮箱" if email else "已清除当前接收人的备用邮箱")
-
-    def _save_manual_binding(self):
-        app_id = self.app_id_input.text().strip()
-        app_secret = self.app_secret_input.text().strip()
-        open_id = self.open_id_input.text().strip()
-        if not all([app_id, app_secret, open_id]):
-            QMessageBox.warning(self, "提示", "请填写完整的 App ID、App Secret 和 Open ID")
-            return
-        label = app_id  # use app_id as label if no better name
-        try:
-            self._bm.add_binding(label, app_id, app_secret, open_id)
-            self._refresh_binding_list()
-            QMessageBox.information(self, "成功", f"绑定已保存（标签: {label}）")
-            self.app_id_input.clear()
-            self.app_secret_input.clear()
-            self.open_id_input.clear()
-        except ValueError as e:
-            QMessageBox.warning(self, "绑定失败", str(e))
+    # ── Load / Save ──────────────────────────────────────────────
 
     def _load_settings(self):
-        """Load current settings into UI."""
         # Screenshot
         interval = self._cm.get("screenshot.interval_minutes", 15)
         idx = self.interval_combo.findData(interval)
@@ -363,33 +376,22 @@ class SettingsDialog(QDialog):
         self.quality_spin.setValue(self._cm.get("screenshot.quality", 80))
         self.output_dir_input.setText(self._cm.get("screenshot.output_dir", ""))
 
-        # Storage
         self.auto_clean_check.setChecked(self._cm.get("storage.auto_clean", True))
         self.retention_spin.setValue(self._cm.get("storage.retention_days", 30))
         self.max_size_spin.setValue(self._cm.get("storage.max_size_gb", 5))
-
-        # Feishu
-        self.feishu_enabled_check.setChecked(self._cm.get("feishu.enabled", True))
-
-        # Load active binding's email
-        active = self._bm.get_active_binding()
-        if active:
-            self.binding_email_input.setText(active.get("email", ""))
-
-        # Email
-        self.email_enabled_check.setChecked(self._cm.get("email.enabled", False))
-        self.email_sender_input.setText(self._cm.get("email.sender", ""))
-        self.smtp_host_input.setText(self._cm.get("email.smtp_host", ""))
-        self.smtp_port_spin.setValue(self._cm.get("email.smtp_port", 465))
-        self.email_recipient_input.setText(self._cm.get("email.recipient", ""))
 
         # General
         self.auto_start_check.setChecked(self._cm.get("general.auto_start", False))
         self.minimize_tray_check.setChecked(self._cm.get("general.minimize_to_tray", True))
         self.keep_awake_check.setChecked(self._cm.get("general.keep_awake", True))
 
+        # Email / SMTP
+        self.email_enabled_check.setChecked(self._cm.get("email.enabled", False))
+        self.email_sender_input.setText(self._cm.get("email.sender", ""))
+        self.smtp_host_input.setText(self._cm.get("email.smtp_host", ""))
+        self.smtp_port_spin.setValue(self._cm.get("email.smtp_port", 465))
+
     def _save(self):
-        """Save settings from UI to config."""
         # Screenshot
         interval_text = self.interval_combo.currentText().replace(" 分钟", "").strip()
         try:
@@ -400,27 +402,21 @@ class SettingsDialog(QDialog):
         self._cm.set("screenshot.quality", self.quality_spin.value())
         self._cm.set("screenshot.output_dir", self.output_dir_input.text())
 
-        # Storage
         self._cm.set("storage.auto_clean", self.auto_clean_check.isChecked())
         self._cm.set("storage.retention_days", self.retention_spin.value())
         self._cm.set("storage.max_size_gb", self.max_size_spin.value())
-
-        # Feishu
-        self._cm.set("feishu.enabled", self.feishu_enabled_check.isChecked())
-
-        # Email
-        self._cm.set("email.enabled", self.email_enabled_check.isChecked())
-        self._cm.set("email.sender", self.email_sender_input.text())
-        self._cm.set("email.smtp_host", self.smtp_host_input.text())
-        self._cm.set("email.smtp_port", self.smtp_port_spin.value())
-        self._cm.set("email.recipient", self.email_recipient_input.text())
 
         # General
         self._cm.set("general.auto_start", self.auto_start_check.isChecked())
         self._cm.set("general.minimize_to_tray", self.minimize_tray_check.isChecked())
         self._cm.set("general.keep_awake", self.keep_awake_check.isChecked())
 
-        # Save email password to secrets
+        # Email / SMTP
+        self._cm.set("email.enabled", self.email_enabled_check.isChecked())
+        self._cm.set("email.sender", self.email_sender_input.text())
+        self._cm.set("email.smtp_host", self.smtp_host_input.text())
+        self._cm.set("email.smtp_port", self.smtp_port_spin.value())
+
         pwd = self.email_password_input.text().strip()
         if pwd:
             self._cm.set_secret("email.password", pwd)

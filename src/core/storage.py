@@ -16,9 +16,14 @@ def build_shot_filename(now: datetime | None = None) -> str:
     return now.strftime("%Y-%m-%d_%H%M%S") + ".jpg"
 
 
-def get_output_dir(configured_dir: str) -> Path:
-    """Return the output directory, creating it if needed."""
-    if configured_dir:
+def get_output_dir(configured_dir: str, binding_output_dir: str = "") -> Path:
+    """Return the output directory, creating it if needed.
+
+    Precedence: per-recipient binding dir > global configured dir > default.
+    """
+    if binding_output_dir:
+        d = Path(binding_output_dir)
+    elif configured_dir:
         d = Path(configured_dir)
     else:
         d = Path.home() / "Pictures" / "ScreenshotCourier"

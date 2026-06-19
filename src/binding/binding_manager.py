@@ -33,6 +33,7 @@ class BindingManager:
                 "label": b["label"],
                 "receive_id": b.get("receive_id", ""),
                 "email": b.get("email", ""),
+                "output_dir": b.get("output_dir", ""),
                 "mode": b.get("mode", "private"),
                 "created_at": b.get("created_at", ""),
             }
@@ -81,6 +82,7 @@ class BindingManager:
         mode: str = "private",
         group_chat_id: str = "",
         email: str = "",
+        output_dir: str = "",
     ) -> str:
         """Add a new binding and set it as active. Returns the new binding id."""
         bindings = self._get_bindings()
@@ -97,6 +99,7 @@ class BindingManager:
             "mode": mode,
             "group_chat_id": group_chat_id,
             "email": email,
+            "output_dir": output_dir,
             "created_at": datetime.now().isoformat(),
         }
         bindings.append(binding)
@@ -157,6 +160,27 @@ class BindingManager:
         self._cm.set_secret(f"feishu.bindings.{binding_id}", app_secret)
         logger.info("Updated secret for binding %s", binding_id)
         return True
+
+    def update_binding_label(self, binding_id: str, label: str) -> bool:
+        """Rename a binding."""
+        bindings = self._get_bindings()
+        for b in bindings:
+            if b["id"] == binding_id:
+                b["label"] = label
+                self._save_bindings(bindings)
+                logger.info("Renamed binding %s to %s", binding_id, label)
+                return True
+        return False
+
+    def update_binding_output_dir(self, binding_id: str, output_dir: str) -> bool:
+        """Update the per-recipient screenshot directory."""
+        bindings = self._get_bindings()
+        for b in bindings:
+            if b["id"] == binding_id:
+                b["output_dir"] = output_dir
+                self._save_bindings(bindings)
+                return True
+        return False
 
     def update_binding_email(self, binding_id: str, email: str) -> bool:
         """Update the email for a binding. Returns True if updated."""
