@@ -69,7 +69,6 @@ class MainWindow(QMainWindow):
         self._tray.open_settings.connect(self._open_settings)
         self._tray.open_screenshot_dir.connect(self._open_screenshot_dir)
         self._tray.take_screenshot_now.connect(self._take_screenshot_now)
-        self._tray.switch_binding.connect(self._switch_binding)
         self._tray.quit_app.connect(self._quit)
 
         # Thread-safe signals
@@ -192,6 +191,18 @@ class MainWindow(QMainWindow):
         bottom_layout.addWidget(dir_btn)
 
         layout.addLayout(bottom_layout)
+
+        quit_btn = QPushButton("退出程序")
+        quit_btn.setMinimumHeight(32)
+        quit_btn.setStyleSheet("""
+            QPushButton {
+                background-color: transparent; color: #999; border: 1px solid #ccc;
+                border-radius: 4px; font-size: 12px;
+            }
+            QPushButton:hover { color: #F44336; border-color: #F44336; }
+        """)
+        quit_btn.clicked.connect(self._quit)
+        layout.addWidget(quit_btn)
 
         layout.addStretch()
 

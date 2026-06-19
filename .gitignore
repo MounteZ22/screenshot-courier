@@ -19,3 +19,8 @@ Thumbs.db
 # Screenshots (user data, never commit)
 pic*/*.jpg
 pic*/*.png
+
+# PyInstaller build artifacts
+build/
+dist/
+*.spec.bak

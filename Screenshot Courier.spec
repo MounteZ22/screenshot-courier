@@ -1,0 +1,76 @@
+# -*- mode: python ; coding: utf-8 -*-
+
+a = Analysis(
+    ['run.py'],
+    pathex=[],
+    binaries=[],
+    datas=[('resources/icon.ico', 'resources')],
+    hiddenimports=[
+        'lark_oapi',
+        'lark_oapi.api.im.v1',
+        'lark_oapi.api.im.v1.model',
+        'yagmail',
+        'mss',
+        'apscheduler',
+        'apscheduler.schedulers.background',
+        'win32crypt',
+        'qrcode',
+        'requests_toolbelt',
+        'PIL',
+    ],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[
+        'PyQt5',
+        'PyQt6',
+        'matplotlib',
+        'jupyter',
+        'notebook',
+        'nbformat',
+        'ipykernel',
+        'sphinx',
+        'docutils',
+        'black',
+        'pytest',
+        'jedi',
+        'zmq',
+        'tornado',
+        'tkinter',
+        '_tkinter',
+        'yapf',
+    ],
+    noarchive=False,
+    optimize=0,
+)
+
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [],
+    exclude_binaries=True,
+    name='Screenshot Courier',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,
+    console=False,
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=['resources\\icon.ico'],
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='Screenshot Courier',
+)
